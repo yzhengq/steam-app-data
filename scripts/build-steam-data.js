@@ -124,16 +124,39 @@ async function writeJson(path, data) {
   await fs.writeFile(path, JSON.stringify(data, null, 2) + '\n');
 }
 
+async function readExistingList(path, fallbackBuilder) {
+  try {
+    const text = await fs.readFile(path, 'utf8');
+    const data = JSON.parse(text);
+
+    if (Array.isArray(data)) {
+      const appids = data
+        .map(Number)
+        .filter((appid) => Number.isInteger(appid) && appid > 0)
+        .sort((a, b) => a - b);
+
+      console.log(`Using existing ${path}, count=${appids.length}`);
+      return appids;
+    }
+  } catch (error) {
+    console.log(`No reusable ${path}, rebuilding...`);
+  }
+
+  return fallbackBuilder();
+}
+
 async function main() {
   await fs.mkdir('data', { recursive: true });
 
-  const cards = await buildMergedList('cards', [
-    {
-      label: 'Steam Trading Cards',
-      category1: 998,
-      category2: 29,
-    },
-  ]);
+  const cards = await readExistingList('data/cards.json', async () =>
+    buildMergedList('cards', [
+      {
+        label: 'Steam Trading Cards',
+        category1: 998,
+        category2: 29,
+      },
+    ])
+  );
 
   // Steam Store search does not reliably expose Profile Features Limited as
   // category2=1003823. When ignored, Steam returns the whole catalog, which is
