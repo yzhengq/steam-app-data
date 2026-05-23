@@ -3,13 +3,20 @@ const fs = require('fs/promises');
 const SEARCH_COUNT = 50;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchJson(url) {
+async function fetchJson(url, attempt = 1) {
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 steam-app-data-builder',
       Accept: 'application/json,text/javascript,*/*',
     },
   });
+
+  if (res.status === 429) {
+    const waitMs = Math.min(60000, 10000 * attempt);
+    console.log(`HTTP 429 rate limited. Waiting ${waitMs / 1000}s before retry ${attempt}...`);
+    await sleep(waitMs);
+    return fetchJson(url, attempt + 1);
+  }
 
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${url}`);
@@ -67,7 +74,7 @@ async function getAppsWithCards() {
       break;
     }
 
-    await sleep(1200);
+    await sleep(3500);
   }
 
   return [...cardApps].sort((a, b) => a - b);
