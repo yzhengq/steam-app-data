@@ -24,8 +24,7 @@ jobs:
 
       - name: Build Steam data
         run: node scripts/build-steam-data.js
-        env:
-          STEAM_WEB_API_KEY: ${{ secrets.STEAM_WEB_API_KEY }}
+       
 
       - name: Commit data
         uses: stefanzweifel/git-auto-commit-action@v5
