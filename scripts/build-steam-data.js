@@ -1,6 +1,9 @@
 const fs = require('fs/promises');
 
 const SEARCH_COUNT = 50;
+const PAGE_DELAY_MS = 3500;
+const MAX_RETRY_DELAY_MS = 120000;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fetchJson(url, attempt = 1) {
@@ -12,7 +15,7 @@ async function fetchJson(url, attempt = 1) {
   });
 
   if (res.status === 429) {
-    const waitMs = Math.min(60000, 10000 * attempt);
+    const waitMs = Math.min(MAX_RETRY_DELAY_MS, 10000 * attempt);
     console.log(`HTTP 429 rate limited. Waiting ${waitMs / 1000}s before retry ${attempt}...`);
     await sleep(waitMs);
     return fetchJson(url, attempt + 1);
@@ -45,65 +48,133 @@ function parseTotalCount(value) {
   return digits ? Number(digits) : 0;
 }
 
-async function getAppsWithCards() {
-  const cardApps = new Set();
+function buildSearchUrl({ start, count, category1, category2 }) {
+  const params = new URLSearchParams({
+    query: '',
+    start: String(start),
+    count: String(count),
+    dynamic_data: '',
+    sort_by: '_ASC',
+    ignore_preferences: '1',
+    force_infinite: '1',
+    infinite: '1',
+  });
+
+  if (category1) {
+    params.set('category1', String(category1));
+  }
+  if (category2) {
+    params.set('category2', String(category2));
+  }
+
+  return `https://store.steampowered.com/search/results/?${params.toString()}`;
+}
+
+async function fetchSearchAppids(source) {
+  const appids = new Set();
   let start = 0;
   let totalCount = Infinity;
 
   while (start < totalCount) {
-    const url =
-      'https://store.steampowered.com/search/results/' +
-      `?query=&start=${start}&count=${SEARCH_COUNT}` +
-      '&dynamic_data=&sort_by=_ASC&category1=998&category2=29' +
-      '&ignore_preferences=1&force_infinite=1&infinite=1';
+    const url = buildSearchUrl({
+      start,
+      count: SEARCH_COUNT,
+      category1: source.category1,
+      category2: source.category2,
+    });
 
     const data = await fetchJson(url);
-    const html = data.results_html || '';
-    const appids = extractAppids(html);
+    const pageAppids = extractAppids(data.results_html || '');
 
-    for (const appid of appids) {
-      cardApps.add(appid);
+    for (const appid of pageAppids) {
+      appids.add(appid);
     }
 
     totalCount = parseTotalCount(data.total_count);
     start += SEARCH_COUNT;
 
-    console.log(`Loaded ${cardApps.size} card apps, page start: ${start}, total: ${totalCount}`);
+    console.log(
+      `[${source.name}] loaded ${appids.size} appids, page start: ${start}, total: ${totalCount}`
+    );
 
-    if (appids.length === 0) {
+    if (pageAppids.length === 0) {
       break;
     }
 
-    await sleep(3500);
+    await sleep(PAGE_DELAY_MS);
   }
 
-  return [...cardApps].sort((a, b) => a - b);
+  return [...appids].sort((a, b) => a - b);
+}
+
+async function buildMergedList(name, sources) {
+  const merged = new Set();
+
+  for (const source of sources) {
+    const appids = await fetchSearchAppids({ ...source, name });
+    for (const appid of appids) {
+      merged.add(appid);
+    }
+  }
+
+  return [...merged].sort((a, b) => a - b);
+}
+
+async function writeJson(path, data) {
+  await fs.writeFile(path, JSON.stringify(data, null, 2) + '\n');
 }
 
 async function main() {
   await fs.mkdir('data', { recursive: true });
 
-  const cardApps = await getAppsWithCards();
+  const cards = await buildMergedList('cards', [
+    {
+      label: 'Steam Trading Cards',
+      category1: 998,
+      category2: 29,
+    },
+  ]);
 
-  await fs.writeFile(
-    'data/cards.json',
-    JSON.stringify(cardApps, null, 2) + '\n'
+  const restricted = await buildMergedList('restricted', [
+    {
+      label: 'Profile Features Limited',
+      category1: 998,
+      category2: 1003823,
+    },
+  ]);
+
+  const nogame = await buildMergedList('nogame', [
+    {
+      label: 'DLC',
+      category1: 21,
+    },
+    {
+      label: 'Soundtrack',
+      category2: 50,
+    },
+  ]);
+
+  await writeJson('data/cards.json', cards);
+  await writeJson('data/restricted.json', restricted);
+  await writeJson('data/nogame.json', nogame);
+  await writeJson('data/meta.json', {
+    updatedAt: new Date().toISOString(),
+    source: 'Steam Store search results',
+    counts: {
+      cards: cards.length,
+      restricted: restricted.length,
+      nogame: nogame.length,
+    },
+    categories: {
+      cards: ['category1=998', 'category2=29'],
+      restricted: ['category1=998', 'category2=1003823'],
+      nogame: ['category1=21', 'category2=50'],
+    },
+  });
+
+  console.log(
+    `Done. cards=${cards.length}, restricted=${restricted.length}, nogame=${nogame.length}`
   );
-
-  await fs.writeFile(
-    'data/meta.json',
-    JSON.stringify(
-      {
-        updatedAt: new Date().toISOString(),
-        source: 'Steam Store search category2=29',
-        cardsCount: cardApps.length,
-      },
-      null,
-      2
-    ) + '\n'
-  );
-
-  console.log(`Done. Found ${cardApps.length} apps with trading cards.`);
 }
 
 main().catch((error) => {
