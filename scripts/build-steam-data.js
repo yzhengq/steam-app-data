@@ -135,13 +135,11 @@ async function main() {
     },
   ]);
 
-  const restricted = await buildMergedList('restricted', [
-    {
-      label: 'Profile Features Limited',
-      category1: 998,
-      category2: 1003823,
-    },
-  ]);
+  // Steam Store search does not reliably expose Profile Features Limited as
+  // category2=1003823. When ignored, Steam returns the whole catalog, which is
+  // too large and produces false data. Keep this list empty until a reliable
+  // source is wired in.
+  const restricted = [];
 
   const nogame = await buildMergedList('nogame', [
     {
@@ -167,7 +165,7 @@ async function main() {
     },
     categories: {
       cards: ['category1=998', 'category2=29'],
-      restricted: ['category1=998', 'category2=1003823'],
+      restricted: [],
       nogame: ['category1=21', 'category2=50'],
     },
   });
