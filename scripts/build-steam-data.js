@@ -1,73 +1,94 @@
 const fs = require('fs/promises');
 
-const CARD_CATEGORY_ID = 29;
-
-
+const SEARCH_COUNT = 50;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fetchJson(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 steam-app-data-builder',
+      Accept: 'application/json,text/javascript,*/*',
+    },
+  });
+
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${url}`);
   }
+
   return res.json();
 }
 
-async function getSteamApps() {
-  const url = 'https://api.steampowered.com/ISteamApps/GetAppList/v2/';
-  const data = await fetchJson(url);
-  const apps = data.applist?.apps || [];
+function extractAppids(html) {
+  const appids = new Set();
 
-  console.log(`Loaded ${apps.length} apps from public Steam app list`);
+  for (const match of html.matchAll(/data-ds-appid="(\d+)"/g)) {
+    appids.add(Number(match[1]));
+  }
 
-  return apps
-    .map((app) => Number(app.appid))
-    .filter((appid) => Number.isInteger(appid) && appid > 0)
-    .sort((a, b) => a - b);
+  for (const match of html.matchAll(/\/app\/(\d+)\//g)) {
+    appids.add(Number(match[1]));
+  }
+
+  return [...appids].filter((appid) => Number.isInteger(appid) && appid > 0);
 }
 
-async function getAppsWithCards(appids) {
-  const cardApps = [];
-  const chunkSize = 50;
+function parseTotalCount(value) {
+  const text = String(value ?? '');
+  const digits = text.replace(/[^\d]/g, '');
+  return digits ? Number(digits) : 0;
+}
 
-  for (let i = 0; i < appids.length; i += chunkSize) {
-    const chunk = appids.slice(i, i + chunkSize);
+async function getAppsWithCards() {
+  const cardApps = new Set();
+  let start = 0;
+  let totalCount = Infinity;
+
+  while (start < totalCount) {
     const url =
-      `https://store.steampowered.com/api/appdetails` +
-      `?appids=${chunk.join(',')}&filters=categories&l=english`;
+      'https://store.steampowered.com/search/results/' +
+      `?query=&start=${start}&count=${SEARCH_COUNT}` +
+      '&dynamic_data=&sort_by=_ASC&category1=998&category2=29' +
+      '&ignore_preferences=1&force_infinite=1&infinite=1';
 
     const data = await fetchJson(url);
+    const html = data.results_html || '';
+    const appids = extractAppids(html);
 
-    for (const appid of chunk) {
-      const item = data[String(appid)];
-      const categories = item?.data?.categories || [];
-
-      if (categories.some((category) => category.id === CARD_CATEGORY_ID)) {
-        cardApps.push(appid);
-      }
+    for (const appid of appids) {
+      cardApps.add(appid);
     }
 
-    console.log(`Checked ${Math.min(i + chunkSize, appids.length)} / ${appids.length}`);
+    totalCount = parseTotalCount(data.total_count);
+    start += SEARCH_COUNT;
+
+    console.log(`Loaded ${cardApps.size} card apps, page start: ${start}, total: ${totalCount}`);
+
+    if (appids.length === 0) {
+      break;
+    }
+
     await sleep(1200);
   }
 
-  return cardApps.sort((a, b) => a - b);
+  return [...cardApps].sort((a, b) => a - b);
 }
 
 async function main() {
   await fs.mkdir('data', { recursive: true });
 
-  const appids = await getSteamApps();
-  const cardApps = await getAppsWithCards(appids);
+  const cardApps = await getAppsWithCards();
 
-  await fs.writeFile('data/cards.json', JSON.stringify(cardApps, null, 2) + '\n');
+  await fs.writeFile(
+    'data/cards.json',
+    JSON.stringify(cardApps, null, 2) + '\n'
+  );
 
   await fs.writeFile(
     'data/meta.json',
     JSON.stringify(
       {
         updatedAt: new Date().toISOString(),
-        totalGamesChecked: appids.length,
+        source: 'Steam Store search category2=29',
         cardsCount: cardApps.length,
       },
       null,
