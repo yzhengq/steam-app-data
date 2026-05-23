@@ -1,11 +1,7 @@
 const fs = require('fs/promises');
 
-const API_KEY = process.env.STEAM_WEB_API_KEY;
 const CARD_CATEGORY_ID = 29;
 
-if (!API_KEY) {
-  throw new Error('Missing STEAM_WEB_API_KEY');
-}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -18,38 +14,16 @@ async function fetchJson(url) {
 }
 
 async function getSteamApps() {
-  const apps = [];
-  let lastAppid = 0;
+  const url = 'https://api.steampowered.com/ISteamApps/GetAppList/v2/';
+  const data = await fetchJson(url);
+  const apps = data.applist?.apps || [];
 
-  while (true) {
-    const input = {
-      include_games: true,
-      max_results: 50000,
-    };
+  console.log(`Loaded ${apps.length} apps from public Steam app list`);
 
-    if (lastAppid) {
-      input.last_appid = lastAppid;
-    }
-
-    const url =
-      `https://partner.steam-api.com/IStoreService/GetAppList/v1/` +
-      `?key=${API_KEY}&input_json=${encodeURIComponent(JSON.stringify(input))}`;
-
-    const data = await fetchJson(url);
-    const page = data.response?.apps || [];
-
-    if (page.length === 0) break;
-
-    apps.push(...page);
-    lastAppid = page[page.length - 1].appid;
-
-    console.log(`Loaded ${apps.length} apps, last appid: ${lastAppid}`);
-
-    if (page.length < 50000) break;
-    await sleep(1000);
-  }
-
-  return apps.map((app) => app.appid);
+  return apps
+    .map((app) => Number(app.appid))
+    .filter((appid) => Number.isInteger(appid) && appid > 0)
+    .sort((a, b) => a - b);
 }
 
 async function getAppsWithCards(appids) {
