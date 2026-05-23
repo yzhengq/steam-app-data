@@ -24,7 +24,6 @@ jobs:
 
       - name: Build Steam data
         run: node scripts/build-steam-data.js
-       
 
       - name: Commit data
         uses: stefanzweifel/git-auto-commit-action@v5
